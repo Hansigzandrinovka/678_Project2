@@ -342,7 +342,7 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
 
         if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1) //if new job should preempt old (worst) job
         {
-            if(temp_job->response_time == time) //if temp job arrived on core in THIS time block
+            if(temp_job->response_time == time - current_core_jobs[lowest_priority_index]->job_time) //if temp job arrived on core in THIS time block
             {
                 temp_job->response_time = -1; //undo its receive-time time-stamping
             }
@@ -353,7 +353,8 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
             //reaching here, new_job now points to the job we preempted from the core
 
                             //since preempting task just preempted, mark its receiving time now
-            current_core_jobs[lowest_priority_index]->response_time = 0; //preempting task is being handled by cores
+            if(current_core_jobs[lowest_priority_index]->response_time == -1)
+                current_core_jobs[lowest_priority_index]->response_time = 0; //preempting task is being handled by cores
         }
     }
     //reaching here, our "new job" (either newly scheduled job, or the job removed by preemption) will be pushed onto pending tasks queue
