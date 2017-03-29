@@ -108,7 +108,7 @@ int lowest_core_index = 0;
 int initial_timestamp = 0; //the last time program updated, used for calculating wait time of programs
 
 //statistic tracking variables
-float total_waiting_time = 0.0;
+float total_waiting_time = 0.0; //running wait time as updated whenever a job finishes
 float total_response_time = 0.0;
 float total_turnaround_time = 0.0;
 int total_num_jobs = 0;
@@ -197,6 +197,7 @@ void scheduler_start_up(int cores, scheme_t scheme)
         total_turnaround_time = 0.0;
         total_num_jobs = 0;
         initial_timestamp = 0; //initialize timestamp
+        preemption_comparer = 0; //initially,
 	
 	current_scheduling_mode = scheme; //all cores run with this scheme
 	//initialize and configure pending_tasks based on which scheme to prioritize with
@@ -226,12 +227,14 @@ void scheduler_start_up(int cores, scheme_t scheme)
 		{
 			//printf("detected PRI\n");
 			priqueue_init(&pending_tasks,sort_by_priority);
+                        break;
 		}
 		case(PPRI): //low priority jobs can preempt active jobs
 		{
 			//printf("detected PPRI\n");
 			priqueue_init(&pending_tasks,sort_by_priority);
 			preemption_comparer = sort_by_priority;
+                        break;
 		}
 		case(RR): //first jobs have highest priority, enable quantum-based preemption
 		{
@@ -239,6 +242,7 @@ void scheduler_start_up(int cores, scheme_t scheme)
 			priqueue_init(&pending_tasks,sort_by_fcfs_or_rr);
 			//quantum_size = 1;//default quantum size is 1, simply to raise awareness of quantum timing
 			//TODO: configure flag to notify of quantum-based prioritization
+                        break;
 		}
 	}
 	priqueue_init(&finished_tasks,sort_by_fcfs_or_rr); //we don't care how finished jobs are sorted, we just want them stored somewhere
@@ -274,7 +278,7 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
     int return_core_id = -1; //becomes the core id of the core that takes in the new job, otherwise is -1
     //when new job arrives, decide what to do with it depending on which scheduler mode we are in
     struct _job_t *new_job; //creates a job to store on queue/push to core
-    new_job = malloc(sizeof(new_job));
+    new_job = malloc(sizeof(job_t));
     new_job->job_number = job_number;
     new_job->job_time = time; //arrival time
     //new_job->wait_time = 0;
@@ -464,7 +468,7 @@ int scheduler_quantum_expired(int core_id, int time)
  */
 float scheduler_average_waiting_time()
 {
-        return (total_waiting_time / (float)total_num_jobs);
+        return (float)((float)total_waiting_time / ((float)total_num_jobs));
 }
 
 
@@ -477,7 +481,7 @@ float scheduler_average_waiting_time()
  */
 float scheduler_average_turnaround_time()
 {
-        return total_turnaround_time / (float)total_num_jobs;
+        return (float)((float)total_turnaround_time / ((float)total_num_jobs));
 }
 
 
@@ -490,7 +494,7 @@ float scheduler_average_turnaround_time()
  */
 float scheduler_average_response_time()
 {
-        return total_response_time / (float)total_num_jobs;
+        return (float)((float)total_response_time / ((float)total_num_jobs));
 }
 
 
