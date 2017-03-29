@@ -24,10 +24,12 @@ typedef int(*comparer)(const void *, const void *); //defines method type for jo
 typedef struct _job_t
 {
 	int job_number; //stores job identifier
-	int job_time; //time that job last entered queue
+	int job_time; //time that job last entered queue OR last exited queue (whichever came last). When job finishes, is time of job finishing
 	int run_time; //time left before finished running
 	int wait_time; //time spent waiting in pending_tasks queue
 	int priority; //how little user wants job to go first
+	int initial_timestamp; //time that job was first processed by scheduler (pushed to queue or preempted)
+	int first_receive_time; //time that job was first acted upon by scheduler (decreased run time), is -1 if not received yet
 } job_t;
 
 //in fcfs, all new jobs come after all current jobs
@@ -38,7 +40,7 @@ int sort_by_fcfs_or_rr(const void *hopefully_job_a, const void *hopefully_job_b)
 		//not needed since the outcome is preordained
 	//***compare job properties
 	//
-	printf("adding job %d to back of stack\n",((job_t*)hopefully_job_a)->job_number);
+	//printf("adding job %d to back of stack\n",((job_t*)hopefully_job_a)->job_number);
 	return 1;
 }
 //compare job_time to see which will be finished first
@@ -53,7 +55,17 @@ int sort_by_shortest_job(const void *hopefully_job_a, const void *hopefully_job_
 		printf("new job is shorter\n");
 		return -1;
 	}
-	printf("old job is shorter\n");
+	if(job_a->run_time > job_b->run_time) //job b has shorter time
+	{
+		//printf("old job is shorter\n");
+		return 1;
+	}
+	//reaching here, jobs tie for run time, use arrival time
+	if(job_a->initial_timestamp < job_b->initial_timestamp) //job a came first
+	{
+		return -1;
+	}
+	//otw, job b has earlier arrival time
 	return 1;
 }
 //highest (smallest value) priority goes first
@@ -65,8 +77,18 @@ int sort_by_priority(const void *hopefully_job_a, const void *hopefully_job_b)
 	//***compare job properties
 	if(job_a->priority < job_b->priority) //if first job's priority is higher (lower value) than second job's priority
 	{
-		printf("new job has higher priority\n"); 
+		//printf("new job has higher priority\n"); 
 		return -1; //first job goes first
+	}
+	if(job_a->priority > job_b->priority) //job b priority higher
+	{
+		//printf("old job has higher priority\n");
+		return 1;
+	}
+	//reaching here, priority is the same, check timestamp
+	if(job_a->initial_timestamp < job_b->initial_timestamp) //job_a shot first
+	{
+		return -1;
 	}
 	return 1; //otw 2nd job goes first
 }
@@ -81,7 +103,7 @@ struct _job_t** current_core_jobs = 0; //tracks all currently active jobs on cor
 int current_num_cores = 0; //tracks size of current_core_jobs to prevent pointer-out-of-bounds errors
 int quantum_size = 0; //tracks if round-robin quantum tracking is enabled (0 for disabled, >= 1 for enabled), and tracks size of quantum
 int lowest_core_index = 0;
-int last_timestamp = 0; //the last time program updated, used for calculating wait time of programs
+int initial_timestamp = 0; //the last time program updated, used for calculating wait time of programs
 
 //@pre: preemption is allowed, preemption-comparer is well defined
 //checks each core to see if core is free or if core has lower priority (more preferable to be preempted than) than previous cores.
@@ -95,7 +117,7 @@ int get_lowest_priority_core()
     //iterate through cores looking for lowest priority core
     if(current_core_jobs[0] == NULL) //handle case where 0th core has no job before we start iterating
 	{
-        printf("0th core is idle, is lowest priority\n");
+        //printf("0th core is idle, is lowest priority\n");
 		return 0;
 	}
     //reaching here, current_core_jobs[0] is defined, so we can skip it for iteration sake
@@ -105,13 +127,13 @@ int get_lowest_priority_core()
     {
         if(current_core_jobs[i] == NULL) //if no job scheduled for this core, it has lowest priority, should be allocated next
 		{
-			printf("core %d is idle, is lowest priority\n",i);
+			//printf("core %d is idle, is lowest priority\n",i);
 			return i;
 		}
         //reaching here, current_core_jobs[i] is defined
         if(preemption_comparer(current_core_jobs[i],current_core_jobs[index_to_return]) > 0) //if found core has lower priority than last picked lowest priority core
         {
-			printf("by comparison, core %d is lowest priority\n",i);
+			//printf("by comparison, core %d is lowest priority\n",i);
             index_to_return = i;
         }
     }
@@ -148,45 +170,45 @@ void scheduler_start_up(int cores, scheme_t scheme)
 	{
 		case(FCFS): //first jobs in have highest priority
 		{
-			printf("detected FCFS\n");
+			//printf("detected FCFS\n");
 			priqueue_init(&pending_tasks,sort_by_fcfs_or_rr);
 			break;
 		}
 		case(SJF): //shortest jobs have highest priority when fetching next job to do
 		{
-			printf("detected SJF\n");
+			//printf("detected SJF\n");
 			priqueue_init(&pending_tasks,sort_by_shortest_job);
 			break;
 		}
 		case(PSJF): //shortest jobs have highest priority and can preempt active jobs
 		{
 			//like shortest-job-first, but with preemption function defined, will try to preempt before adding to queue
-			printf("detected PSJF\n");
+			//printf("detected PSJF\n");
 			priqueue_init(&pending_tasks,sort_by_shortest_job);
 			preemption_comparer = sort_by_shortest_job; //defines preemption method so that preemption is handled correctly
 			break;
 		}
 		case(PRI): //low priority jobs go first when fetching next job
 		{
-			printf("detected PRI\n");
+			//printf("detected PRI\n");
 			priqueue_init(&pending_tasks,sort_by_priority);
 		}
 		case(PPRI): //low priority jobs can preempt active jobs
 		{
-			printf("detected PPRI\n");
+			//printf("detected PPRI\n");
 			priqueue_init(&pending_tasks,sort_by_priority);
 			preemption_comparer = sort_by_priority;
 		}
 		case(RR): //first jobs have highest priority, enable quantum-based preemption
 		{
-			printf("detected RR\n");
+			//printf("detected RR\n");
 			priqueue_init(&pending_tasks,sort_by_fcfs_or_rr);
 			//quantum_size = 1;//default quantum size is 1, simply to raise awareness of quantum timing
 			//TODO: configure flag to notify of quantum-based prioritization
 		}
 	}
 	priqueue_init(&finished_tasks,sort_by_fcfs_or_rr); //we don't care how finished jobs are sorted, we just want them stored somewhere
-	last_timestamp = 0; //initialize timestamp
+	initial_timestamp = 0; //initialize timestamp
 	
 	//end state: 
 }
@@ -214,7 +236,7 @@ void scheduler_start_up(int cores, scheme_t scheme)
  */
 int scheduler_new_job(int job_number, int time, int running_time, int priority)
 {
-	//last_timestamp = time; //we have a new record last time snapshot
+	//initial_timestamp = time; //we have a new record last time snapshot
 	//printf("new job %d's time is %d, run time %d priority %d\n",job_number,time,running_time,priority);
     int return_core_id = -1; //becomes the core id of the core that takes in the new job, otherwise is -1
 	//when new job arrives, decide what to do with it depending on which scheduler mode we are in
@@ -225,6 +247,8 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
 	new_job->wait_time = 0;
 	new_job->run_time = running_time;
 	new_job->priority = priority;
+	new_job->initial_timestamp = time; //the one time that last_timestamp is set, it is when job is first scheduled
+	new_job->first_receive_time = -1; //job has not been received yet
 	
 	int i = 0; //used for loop iterations
 	for(i = 0; i < current_num_cores; i++) //check that none of the cores are idle (if they're idle, immediately schedule this task)
@@ -233,7 +257,7 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
 		if(current_core_jobs[i] == NULL) //if given core is doing nothing, make it do this instead
 		{
 			current_core_jobs[i] = new_job;
-			printf("core %d was idle, allocating it to job %d\n",i,new_job->job_number);
+			//printf("core %d was idle, allocating it to job %d\n",i,new_job->job_number);
 			//since core was idle before, there is no job to pull off, so return id of core pushed-to
 			return i;
 		}
@@ -243,21 +267,27 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
 	//if our preempting flag is true, compare against active processes
 	if(preemption_comparer != 0) //if we might preempt current jobs (checks that preemption comparer is defined)
 	{
+		//NOTE: tasks are preempted before they can run, so time differences will be 1 more than they should be (it doesn't run this phase)
+		//EG: at time 0, task 0 (total time 8) runs successfully twice. last clock time = 0. Time = 3, task 0 gets preempted by task 1 (total time 2). 3(now) - 0(last) - 1 = 2 = number of executions run since
+		//assume since only one task can be created at a time, tasks don't get preempted in the same timestep they arrive
+		
             int lowest_priority_index = get_lowest_priority_core();
-            if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1)
-            {
-                job_t *temp_job = current_core_jobs[lowest_priority_index]; //grab the job to push back onto queue
-				
-				//since this job was last scheduled (job_time), it has been working, so decrease remaining time (run_time) by the difference
-				temp_job->run_time -= (time - temp_job->job_time);
-				
-				temp_job->job_time = time;//since this job was preempted, it has to wait in queue, so change its job time to current time snapshot to accurately track wait time
-				
+			//properly update core job's remaining time to be fair with comparison
+			job_t *temp_job = current_core_jobs[lowest_priority_index]; //grab the job to push back onto queue
+			//since this job was last scheduled (job_time), it has been working on a core, so decrease remaining time (run_time) by the difference
+			temp_job->run_time -= (time - temp_job->job_time - 1);
+			temp_job->job_time = time;//since run time was changed, update job time so next update, it doesn't decrease job time too much
+			
+            if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1) //if new job should preempt old job
+            {	
                 current_core_jobs[lowest_priority_index] = new_job; //swap new job with temp job
                 new_job = temp_job;
-                return_core_id = i; //we just preempted job at core # low_priority_index
-				printf("preempting core %d with new job %d\n",i,new_job->job_number);
+                return_core_id = lowest_priority_index; //we just preempted job at core # low_priority_index
+				//printf("preempting core %d with new job %d\n",i,new_job->job_number);
                 //reaching here, new_job now points to the job we preempted from the core
+				
+				//since preempting task just preempted, mark its receiving time now
+				current_core_jobs[lowest_priority_index]->first_receive_time = time; //preempting task is being handled by cores
             }
 	}
 	//reaching here, our "new job" (either newly scheduled job, or the job removed by preemption) will be pushed onto pending tasks queue
@@ -293,6 +323,10 @@ int scheduler_job_finished(int core_id, int job_number, int time)
 	finished_job = current_core_jobs[core_id]; //grab job from core
 	current_core_jobs[core_id] = NULL;
 	//***retrieve finished job from core - to push onto finished queue for later
+	
+	//but first, job time takes on the role of marking finish time
+	finished_job->job_time = time; //job finished at this time
+	
 	priqueue_offer(&finished_tasks,finished_job); //mark job as finished, keep it tracked for usage statistics
 	struct _job_t *next_job; //a pointer to the next job (or NULL if no next job) that will run on current core
 	next_job = NULL; //points to nullptr
@@ -301,6 +335,10 @@ int scheduler_job_finished(int core_id, int job_number, int time)
 		next_job = priqueue_remove_at(&pending_tasks,0); //grab first job from queue and run it
 		next_job->wait_time += (time - finished_job->job_time); //job has been waiting on queue since we last pushed it to queue (when we set job time), so the difference between now (time) and that time is how long its waited
 		//allocate this job to the core that just finished
+		if(next_job->first_receive_time == -1) //if job has not been received yet
+		{
+			next_job->first_receive_time = time; //its earliest receive time is now
+		}
 	}
 	//push the next job onto the newly-freed core
 	current_core_jobs[core_id] = next_job; //NOTE: if no next job, current core has NULL job, so it is doing nothing
@@ -308,7 +346,7 @@ int scheduler_job_finished(int core_id, int job_number, int time)
 		return next_job->job_number;
 	//reaching here, there was no next job to schedule, so schedule nothing
 	
-	//last_timestamp = time; //we have a new record last time snapshot
+	//initial_timestamp = time; //we have a new record last time snapshot
 
 	return -1;
 }
@@ -329,14 +367,18 @@ int scheduler_job_finished(int core_id, int job_number, int time)
  */
 int scheduler_quantum_expired(int core_id, int time)
 {
-	printf("quantum expired on core %d\n",core_id);
+	//printf("quantum expired on core %d\n",core_id);
 	struct _job_t *stopped_job;
 	//grab job from core, push back onto pending tasks queue (since is round robin, will go to end of queue)
 	stopped_job = current_core_jobs[core_id]; //grab job from core
 	current_core_jobs[core_id] = NULL;
 	
+	//update the new job's remaining time for when it exits queue
+	stopped_job->run_time -= (time - stopped_job->job_time);
+	stopped_job->job_time = time;//since run time was changed, update job time so that next update, it doesn't decrease job time too much
+	
 	priqueue_offer(&pending_tasks,stopped_job); //mark job as finished, keep it tracked for usage statistics
-	struct _job_t *next_job; //a pointer the next job (or zero if no next job) that will run on current core
+	struct _job_t *next_job; //a pointer for the next job (or zero if no next job) that will run on current core
 	next_job = NULL; //points to nullptr
 	if(priqueue_size(&pending_tasks) >= 1) //if there are still jobs to run,
 	{
@@ -345,6 +387,7 @@ int scheduler_quantum_expired(int core_id, int time)
 	}
 	//push the next job onto the newly-freed core
 	current_core_jobs[core_id] = next_job; //NOTE: if no next job, current core has NULL job, so it is doing nothing
+	//though the fact we added expired job back to queue means it CANNOT be empty
 	if(next_job != NULL) //if we successfully added a new job
 		return next_job->job_number;
 	//reaching here, there was no next job to schedule, so schedule nothing
@@ -383,14 +426,14 @@ float scheduler_average_waiting_time()
  */
 float scheduler_average_turnaround_time()
 {
-	//turnaround time, or time to complete task, is run_time + wait_time
+	//turnaround time, or time to complete task, is job time (finish time) - initial_timestamp
 	int running_total_turnaround_time = 0.0; //incremented by elements in queue
 	int i = 0; //queue index marker
 	int num_tasks = priqueue_size(&finished_tasks);
 	for(i = 0; i < num_tasks; i++) //get each finished task's total wait time
 	{
 		struct _job_t *job_reference = (job_t*)priqueue_at(&finished_tasks,i);
-		running_total_turnaround_time += job_reference->wait_time + job_reference->run_time;
+		running_total_turnaround_time += job_reference->job_time - job_reference->initial_timestamp;
 	}
 	//for each element in finished_job queue, get its wait time, add them together, divide by size
 	return (running_total_turnaround_time / num_tasks);
@@ -406,7 +449,17 @@ float scheduler_average_turnaround_time()
  */
 float scheduler_average_response_time()
 {
-	return 0.0;
+	//response time, or time from submit to first use, is the difference between first_receive_time and initial_timestamp
+	int running_total_time = 0.0; //incremented by elements in queue
+	int i = 0; //queue index marker
+	int num_tasks = priqueue_size(&finished_tasks);
+	for(i = 0; i < num_tasks; i++) //get each finished task's total wait time
+	{
+		struct _job_t *job_reference = (job_t*)priqueue_at(&finished_tasks,i);
+		running_total_time += job_reference->first_receive_time - job_reference->initial_timestamp;
+	}
+	//for each element in finished_job queue, get its wait time, add them together, divide by size
+	return (running_total_time / num_tasks); //take arithmetic mean of total
 }
 
 
@@ -448,6 +501,6 @@ void scheduler_show_queue()
 	{
 		//for each task in the queue, print its details
 		struct _job_t *found_job = (job_t*)priqueue_at(&pending_tasks,i);
-		printf("#%d: ID %d time %d runtime %d priority %d, ",i,found_job->job_number,found_job->job_time,found_job->run_time, found_job->priority);
+		//printf("#%d: ID %d time %d runtime %d priority %d, ",i,found_job->job_number,found_job->job_time,found_job->run_time, found_job->priority);
 	}
 }
