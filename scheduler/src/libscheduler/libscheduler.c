@@ -52,7 +52,7 @@ int sort_by_shortest_job(const void *hopefully_job_a, const void *hopefully_job_
 	//***compare job properties
 	if(job_a->run_time < job_b->run_time) //shorter jobs run first
 	{
-		printf("new job is shorter\n");
+                //printf("new job is shorter\n");
 		return -1;
 	}
 	if(job_a->run_time > job_b->run_time) //job b has shorter time
@@ -139,7 +139,7 @@ int get_lowest_priority_core()
 			return i;
 		}
         //reaching here, current_core_jobs[i] is defined
-        if(preemption_comparer(current_core_jobs[i],current_core_jobs[index_to_return]) < 0) //if our picked core is higher priority than i'th core, pick i'th core
+        if(preemption_comparer(current_core_jobs[i],current_core_jobs[index_to_return]) > 0) //if our picked core is higher priority than i'th core, i'th core has new lowest priority
         {
 			//printf("by comparison, core %d is lowest priority\n",i);
             index_to_return = i;
@@ -286,6 +286,7 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
     new_job->priority = priority;
     new_job->original_process_time = running_time; //first time job processed by scheduler
     new_job->response_time = -1; //job has not been received yet
+    new_job->last_checked_time = -1; //job has not been checked yet (only happens in PSJF)
 
     int idle_core_index = get_idle_core_index();
     if(idle_core_index != -1) //handle idle core case
@@ -310,9 +311,25 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
 
     //reaching here, none of our cores are idle, check for preemption
 
+
     //if our preempting flag is true (points to a method), compare against active processes
     if(preemption_comparer != 0) //if we might preempt current jobs (checks that preemption comparer is defined)
     {
+        if(current_scheduling_mode == PSJF) //we need to update every job's remaining time (run time) before we compare against them
+        {
+            int x = 0;
+            for(x = 0; x < current_num_cores; x++)
+            {
+                if(current_core_jobs[x] != NULL) //each active process decreases its remaining run time by the difference between NOW and last check time
+                {
+                    //printf("decreasing job %d's time by %d, is now ",x,(time - current_core_jobs[x]->last_checked_time));
+                    current_core_jobs[x]->run_time -= (time - current_core_jobs[x]->last_checked_time);
+                    current_core_jobs[x]->last_checked_time = time;
+                    //printf("%d\n",current_core_jobs[x]->run_time);
+                }
+
+            }
+        }
             //NOTE: tasks are preempted before they can run, so time differences will be 1 more than they should be (it doesn't run this phase)
             //EG: at time 0, task 0 (total time 8) runs successfully twice. last clock time = 0. Time = 3, task 0 gets preempted by task 1 (total time 2). 3(now) - 0(last) - 1 = 2 = number of executions run since
             //assume since only one task can be created at a time, tasks don't get preempted in the same timestep they arrive
@@ -323,7 +340,7 @@ int scheduler_new_job(int job_number, int time, int running_time, int priority)
                     //since this job was last scheduled (job_time), it has been working on a core, so decrease remaining time (run_time) by the difference
 
 
-        if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1) //if new job should preempt old job
+        if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1) //if new job should preempt old (worst) job
         {
             if(temp_job->response_time == time) //if temp job arrived on core in THIS time block
             {
@@ -384,6 +401,7 @@ int scheduler_job_finished(int core_id, int job_number, int time)
         struct _job_t *next_job; //a pointer to the next job (or NULL if no next job) that will run on current core
         next_job = NULL; //points to nullptr
         next_job = priqueue_remove_at(&pending_tasks,0); //grab first job from queue and run it
+        next_job->last_checked_time = time; //job was last checked in (and it hasn't made any progress) at this time
         //allocate this job to the core that just finished
         if(next_job->response_time == -1) //if job has not been received yet
         {
@@ -530,12 +548,12 @@ void scheduler_clean_up()
 void scheduler_show_queue()
 {
 	
-        /*int i = 0;
+        int i = 0;
 	int f = priqueue_size(&pending_tasks);
 	for(i = 0; i < f; i++)
 	{
 		//for each task in the queue, print its details
 		struct _job_t *found_job = (job_t*)priqueue_at(&pending_tasks,i);
-		//printf("#%d: ID %d time %d runtime %d priority %d, ",i,found_job->job_number,found_job->job_time,found_job->run_time, found_job->priority);
-        }*/
+                printf("%d T%d R%d P%d, ",found_job->job_number,found_job->job_time,found_job->run_time, found_job->priority);
+        }
 }
