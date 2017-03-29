@@ -26,10 +26,11 @@ typedef struct _job_t
 	int job_number; //stores job identifier
 	int job_time; //time that job last entered queue OR last exited queue (whichever came last). When job finishes, is time of job finishing
 	int run_time; //time left before finished running
-	int wait_time; //time spent waiting in pending_tasks queue
+        //int wait_time; //time spent waiting in pending_tasks queue
 	int priority; //how little user wants job to go first
-	int initial_timestamp; //time that job was first processed by scheduler (pushed to queue or preempted)
-	int first_receive_time; //time that job was first acted upon by scheduler (decreased run time), is -1 if not received yet
+        int initial_timestamp; //time that job was first received by scheduler (pushed to queue or preempted)
+        int first_receive_time; //time that job was first acted upon by scheduler (decreased run time), is -1 if not received yet
+        int last_checked_time; //in preemptive shortest job first, tracks last time we updated job status?
 } job_t;
 
 //in fcfs, all new jobs come after all current jobs
@@ -67,6 +68,8 @@ int sort_by_shortest_job(const void *hopefully_job_a, const void *hopefully_job_
 	}
 	//otw, job b has earlier arrival time
 	return 1;
+
+        //IOTW, return a's time - b's time, unless equal, then retunr a's timestamp - b's timestamp
 }
 //highest (smallest value) priority goes first
 int sort_by_priority(const void *hopefully_job_a, const void *hopefully_job_b)
@@ -105,6 +108,12 @@ int quantum_size = 0; //tracks if round-robin quantum tracking is enabled (0 for
 int lowest_core_index = 0;
 int initial_timestamp = 0; //the last time program updated, used for calculating wait time of programs
 
+//statistic tracking variables
+float total_waiting_time = 0.0;
+float total_response_time = 0.0;
+float total_turnaround_time = 0.0;
+int total_num_jobs = 0;
+
 //@pre: preemption is allowed, preemption-comparer is well defined
 //checks each core to see if core is free or if core has lower priority (more preferable to be preempted than) than previous cores.
 //then returns ID of core that has lowest priority
@@ -131,7 +140,7 @@ int get_lowest_priority_core()
 			return i;
 		}
         //reaching here, current_core_jobs[i] is defined
-        if(preemption_comparer(current_core_jobs[i],current_core_jobs[index_to_return]) > 0) //if found core has lower priority than last picked lowest priority core
+        if(preemption_comparer(current_core_jobs[i],current_core_jobs[index_to_return]) < 0) //if our picked core is higher priority than i'th core, pick i'th core
         {
 			//printf("by comparison, core %d is lowest priority\n",i);
             index_to_return = i;
@@ -139,6 +148,25 @@ int get_lowest_priority_core()
     }
     //reaching here, core with lowest priority has ID index_to_return, return it
     return index_to_return;
+}
+
+//checks if any of the cores are idle (have job pointing to NULL
+//if so, return id of core, else return -1
+int get_idle_core_index()
+{
+    int i = 0; //used for loop iterations
+    for(i = 0; i < current_num_cores; i++) //check that none of the cores are idle (if they're idle, immediately schedule this task)
+    {
+            //if core idle, make core's task this task, return core id
+            if(current_core_jobs[i] == NULL) //if given core is doing nothing, make it do this instead
+            {
+                    //printf("core %d was idle, allocating it to job %d\n",i,new_job->job_number);
+                    //since core was idle before, there is no job to pull off, so return id of core pushed-to
+                    return i;
+            }
+    }
+    //reaching here, all cores busy
+    return -1;
 }
 
 /**
@@ -163,6 +191,13 @@ void scheduler_start_up(int cores, scheme_t scheme)
 	{
 		current_core_jobs[i] = NULL; //make every core point to nullptr (no active job)
 	}
+
+        //initialize variables
+        total_waiting_time = 0.0;
+        total_response_time = 0.0;
+        total_turnaround_time = 0.0;
+        total_num_jobs = 0;
+        initial_timestamp = 0; //initialize timestamp
 	
 	current_scheduling_mode = scheme; //all cores run with this scheme
 	//initialize and configure pending_tasks based on which scheme to prioritize with
@@ -208,7 +243,6 @@ void scheduler_start_up(int cores, scheme_t scheme)
 		}
 	}
 	priqueue_init(&finished_tasks,sort_by_fcfs_or_rr); //we don't care how finished jobs are sorted, we just want them stored somewhere
-	initial_timestamp = 0; //initialize timestamp
 	
 	//end state: 
 }
@@ -236,62 +270,104 @@ void scheduler_start_up(int cores, scheme_t scheme)
  */
 int scheduler_new_job(int job_number, int time, int running_time, int priority)
 {
-	//initial_timestamp = time; //we have a new record last time snapshot
-	//printf("new job %d's time is %d, run time %d priority %d\n",job_number,time,running_time,priority);
+    //initial_timestamp = time; //we have a new record last time snapshot
+    //printf("new job %d's time is %d, run time %d priority %d\n",job_number,time,running_time,priority);
     int return_core_id = -1; //becomes the core id of the core that takes in the new job, otherwise is -1
-	//when new job arrives, decide what to do with it depending on which scheduler mode we are in
-	struct _job_t *new_job; //creates a job to store on queue/push to core
-	new_job = malloc(sizeof(new_job));
-	new_job->job_number = job_number;
-	new_job->job_time = time;
-	new_job->wait_time = 0;
-	new_job->run_time = running_time;
-	new_job->priority = priority;
-	new_job->initial_timestamp = time; //the one time that last_timestamp is set, it is when job is first scheduled
-	new_job->first_receive_time = -1; //job has not been received yet
-	
-	int i = 0; //used for loop iterations
-	for(i = 0; i < current_num_cores; i++) //check that none of the cores are idle (if they're idle, immediately schedule this task)
-	{
-		//if core idle, make core's task this task, return core id
-		if(current_core_jobs[i] == NULL) //if given core is doing nothing, make it do this instead
-		{
-			current_core_jobs[i] = new_job;
-			//printf("core %d was idle, allocating it to job %d\n",i,new_job->job_number);
-			//since core was idle before, there is no job to pull off, so return id of core pushed-to
-			return i;
-		}
-	}
-	//reaching here, none of our cores are idle
-	
-	//if our preempting flag is true, compare against active processes
-	if(preemption_comparer != 0) //if we might preempt current jobs (checks that preemption comparer is defined)
-	{
-		//NOTE: tasks are preempted before they can run, so time differences will be 1 more than they should be (it doesn't run this phase)
-		//EG: at time 0, task 0 (total time 8) runs successfully twice. last clock time = 0. Time = 3, task 0 gets preempted by task 1 (total time 2). 3(now) - 0(last) - 1 = 2 = number of executions run since
-		//assume since only one task can be created at a time, tasks don't get preempted in the same timestep they arrive
-		
-            int lowest_priority_index = get_lowest_priority_core();
-			//properly update core job's remaining time to be fair with comparison
-			job_t *temp_job = current_core_jobs[lowest_priority_index]; //grab the job to push back onto queue
-			//since this job was last scheduled (job_time), it has been working on a core, so decrease remaining time (run_time) by the difference
-			temp_job->run_time -= (time - temp_job->job_time - 1);
-			temp_job->job_time = time;//since run time was changed, update job time so next update, it doesn't decrease job time too much
-			
-            if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1) //if new job should preempt old job
-            {	
-                current_core_jobs[lowest_priority_index] = new_job; //swap new job with temp job
-                new_job = temp_job;
-                return_core_id = lowest_priority_index; //we just preempted job at core # low_priority_index
-				//printf("preempting core %d with new job %d\n",i,new_job->job_number);
-                //reaching here, new_job now points to the job we preempted from the core
-				
-				//since preempting task just preempted, mark its receiving time now
-				current_core_jobs[lowest_priority_index]->first_receive_time = time; //preempting task is being handled by cores
-            }
-	}
-	//reaching here, our "new job" (either newly scheduled job, or the job removed by preemption) will be pushed onto pending tasks queue
-	//push job to queue (which has already been configured to prioritize based on scheduler mode)
+    //when new job arrives, decide what to do with it depending on which scheduler mode we are in
+    struct _job_t *new_job; //creates a job to store on queue/push to core
+    new_job = malloc(sizeof(new_job));
+    new_job->job_number = job_number;
+    new_job->job_time = time;
+    //new_job->wait_time = 0;
+    new_job->run_time = running_time;
+    new_job->priority = priority;
+    new_job->initial_timestamp = time; //the one time that last_timestamp is set, it is when job is first scheduled
+    new_job->first_receive_time = -1; //job has not been received yet
+
+    int idle_core_index = get_idle_core_index();
+    if(idle_core_index != -1) //handle idle core case
+    {
+        current_core_jobs[idle_core_index] = new_job; //idle core detected, allocate job to it
+
+        //COMMENT: why do this?
+        new_job->first_receive_time = 0; //time - current_core_jobs[idle_core_index]->job_time;
+
+        if(current_scheduling_mode == PSJF) //if we are preemptively scheduling shortest job first
+        {
+            new_job->last_checked_time = time;
+        }
+        return idle_core_index;
+    }
+    else if(current_scheduling_mode == PSJF) //all cores busy, find longest-runtime core and check to preempt it, while updating all core times
+    {
+        //reaching here, all cores have jobs
+        int index_of_longest_runtime = 0; //assume 0th core longest
+        int i = 0;
+        for(i = 0; i < current_num_cores; i++)
+        {
+            if(sort_by_shortest_job(current_running_tasks[index_of_longest_runtime],current_running_tasks[i]) < 0) //if i'th task is longer than "longest" task, it is now "longest" task
+                index_of_longest_runtime = i;
+        }
+        //reaching here, we've compared against all active tasks, and found longest task
+
+        //try to preempt this job using newjob
+        if(sort_by_shortest_job(current_running_tasks[index_of_longest_runtime],new_job) < 0) //if new job would preempt longest task
+        {
+            //if we JUST scheduled current task, reset its response time
+            if(current_running_tasks[index_of_longest_runtime]->first_receive_time == time)
+                current_running_tasks[index_of_longest_runtime]->first_receive_time = -1; //it hasn't done anything, so it still hasn't responded
+
+            //push old job onto queue
+            priqueue_offer(&pending_tasks,(void *)current_running_tasks[index_of_longest_runtime]);
+            current_running_tasks[index_of_longest_runtime] = new_job; //new job now running on core
+
+            //if(new_job->response_time == -1)
+            new_job->first_receive_time = time; //job was just received (will process correctly since it preempted, so can't be preempted)
+            return index_of_longest_runtime;
+        }
+    }
+    else if(current_scheduling_mode == PPRI)
+    {
+
+    }
+    /*generally:
+     * find lowest on cores
+     *  check for preemption
+     * if preemption, check if was JUST scheduled
+     *      if was, reset time
+     *      return it
+     */
+
+    //reaching here, none of our cores are idle
+
+    //if our preempting flag is true, compare against active processes
+    if(preemption_comparer != 0) //if we might preempt current jobs (checks that preemption comparer is defined)
+    {
+            //NOTE: tasks are preempted before they can run, so time differences will be 1 more than they should be (it doesn't run this phase)
+            //EG: at time 0, task 0 (total time 8) runs successfully twice. last clock time = 0. Time = 3, task 0 gets preempted by task 1 (total time 2). 3(now) - 0(last) - 1 = 2 = number of executions run since
+            //assume since only one task can be created at a time, tasks don't get preempted in the same timestep they arrive
+
+        int lowest_priority_index = get_lowest_priority_core();
+                    //properly update core job's remaining time to be fair with comparison
+                    job_t *temp_job = current_core_jobs[lowest_priority_index]; //grab the job to push back onto queue
+                    //since this job was last scheduled (job_time), it has been working on a core, so decrease remaining time (run_time) by the difference
+                    temp_job->run_time -= (time - temp_job->job_time - 1);
+                    temp_job->job_time = time;//since run time was changed, update job time so next update, it doesn't decrease job time too much
+
+        if(preemption_comparer(new_job,current_core_jobs[lowest_priority_index]) == -1) //if new job should preempt old job
+        {
+            current_core_jobs[lowest_priority_index] = new_job; //swap new job with temp job
+            new_job = temp_job;
+            return_core_id = lowest_priority_index; //we just preempted job at core # low_priority_index
+                            //printf("preempting core %d with new job %d\n",i,new_job->job_number);
+            //reaching here, new_job now points to the job we preempted from the core
+
+                            //since preempting task just preempted, mark its receiving time now
+                            current_core_jobs[lowest_priority_index]->first_receive_time = time; //preempting task is being handled by cores
+        }
+    }
+    //reaching here, our "new job" (either newly scheduled job, or the job removed by preemption) will be pushed onto pending tasks queue
+    //push job to queue (which has already been configured to prioritize based on scheduler mode)
 	
     priqueue_offer(&pending_tasks,(void *)new_job); //push the job onto the queue (queue handles prioritizing it)
 	
