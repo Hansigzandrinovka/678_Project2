@@ -59,13 +59,14 @@ int priqueue_offer(priqueue_t *q, void *ptr)
 	//placing it somewhere else			
 	else{
 		while(temp -> nxt != NULL){//traverse till the last node				
-			//traverse further and icrement i if we havent foudn newNodes proper place yet
-			if(q->comparer(ptr, temp ->nxt->val) >= 0){
+			//traverse further and icrement thisIndex if we... 
+			//havent foudn newNodes proper place yet
+			if(q->comparer(ptr, temp ->nxt->val) < 0 ){
+				break;//break when we find the index to place our new node
+			}
+			else{	
 				temp = temp -> nxt;
 				thisIndex++;
-			}
-			else{			
-				break;//break when we find the index to place our new node
 			}
 		}
 		//update new nodes nxt and temps nxt to avoid seg faults
